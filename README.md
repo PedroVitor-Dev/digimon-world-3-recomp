@@ -2,7 +2,7 @@
 
 An in-development project to bring Digimon World 3 (PlayStation) to Windows through static recompilation.
 
-**The game is not playable yet.** The current milestone is a working Windows dump preparation launcher and command-line disc analyzer. No game runtime, MIPS recompiler, Vulkan renderer or in-game F1 menu is implemented yet.
+**The game is not playable yet.** Available tools cover dump preparation, native startup/main-entry diagnostics and offline memory-card backup/restoration. A playable boot, the product Vulkan renderer and the in-game F1 menu remain pending.
 
 ## Run the current tools
 
@@ -58,6 +58,20 @@ A pinned C++20 toolchain and Windows diagnostic adaptation are available. See [n
 ```
 
 The probe recompiles a small inspected startup region, executes the InitHeap wrapper through BIOS HLE, then deliberately stops before game main. **No game screen or playable boot has been verified.** The full heuristic output was rejected because it includes invalid instructions and empty call stubs. The diagnostic renderer is OpenGL; the product Vulkan target remains pending.
+
+## Progress preservation (step 3 in progress)
+
+[Step 3 evidence and remaining gates](docs/STEP3_STATUS.md) records the reference-based main-entry diagnostic and its current VSync/black-frame failure. It does not claim gameplay validation.
+
+The [offline save vault](docs/SAVE_STORAGE.md) imports raw 128 KiB memory cards, creates checksummed backups and preserves current progress before restoration. Build/test it with:
+
+```powershell
+.\scripts\build-saves.ps1
+.\scripts\test-saves.ps1
+.\scripts\test-native-saves.ps1
+```
+
+`build/Dw3.Saves.exe` is a separate command-line utility; run it without arguments for usage. It is not connected to the game or overlay yet. The candidate's SIO storage now rejects truncated images and uses safer file replacement; these changes are covered by native synthetic tests.
 
 ## Local data and contributions
 

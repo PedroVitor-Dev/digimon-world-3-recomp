@@ -22,7 +22,8 @@
     "nativeBootVerified": false,
     "gameplayVerified": false,
     "unmodifiedReferenceCompared": false,
-    "nativeStartupProbeVerified": true
+    "nativeStartupProbeVerified": true,
+    "nativeMainEntered": true
   },
   "analysis": {
     "functionMap": null,
@@ -38,6 +39,15 @@
       "psyqMatches": 133,
       "overlayCandidates": 312,
       "proFiles": 318
+    },
+    "referenceAnalysis": {
+      "explicitFieldstgFailureGates": 3,
+      "implicitEmptyJalStubs": 0,
+      "invalidMarkers": 0,
+      "observedFailure": "VSync timeout, zero nonzero pixels in bounded diagnostic capture; exact hang cause unverified.",
+      "referenceCommit": "791932b757b358bb8228f851ce96f4d22ae112dd",
+      "referenceExecutableMatches": false,
+      "residentFunctionEntriesAndAliases": 913
     }
   }
 }

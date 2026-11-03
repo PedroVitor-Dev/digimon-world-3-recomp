@@ -23,7 +23,9 @@ Map the entry point, reachable functions, code/data, BIOS calls, indirect branch
 
 Exit: reproducible native executable reaches a real game screen with useful diagnostics, and limitations are documented.
 
-## 3. Correct gameplay and persistent progress
+## 3. Correct gameplay and persistent progress — in progress
+
+An offline save vault and safer SIO persistence are implemented, but gameplay/save-load through the game remain unverified. The reference-based main diagnostic currently exhibits VSync timeout and a black capture. See [current evidence](STEP3_STATUS.md) and [storage contracts](SAVE_STORAGE.md).
 
 Validate menus, traversal, battles, transitions, FMV, sound, input and memory cards at the original simulation timing. Establish representative test routes and repeat save/reload cycles. Optimize measured bottlenecks after correctness.
 

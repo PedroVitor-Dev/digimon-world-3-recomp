@@ -1,5 +1,7 @@
 # Passo 2 — progresso da prova nativa
 
+> Evolução posterior: o diagnóstico com mapas europeus já entra na rotina principal e encontrou timeout de VSync; veja [o estado do passo 3](STEP3_STATUS.md). Os resultados abaixo registram o marco anterior.
+
 Estado: **em andamento; nenhuma tela do jogo foi validada**. A inicialização restrita foi traduzida, compilada e executada no Windows até uma parada explícita na entrada principal. Isso comprova uma faixa pequena da cadeia de recompilação, sem demonstrar gameplay.
 
 ## Ambiente efetivamente validado

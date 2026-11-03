@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/ReGame-Labs/dw3_decomp.git",
+  "commit": "791932b757b358bb8228f851ce96f4d22ae112dd",
+  "license": "MIT",
+  "use": "Reference metadata only; translated executable does not match the reference SHA1.",
+  "files": [
+    {
+      "path": "config/eu/symbols.txt",
+      "sha256": "a8a42d2aa18332ae4fa4e52a463e4a8c8a61fb288dbbdb468efb25f48959fae6"
+    },
+    {
+      "path": "config/eu/main.yaml",
+      "sha256": "8e8ce632906bba3c03d9132bf4fb839b5a3f6a3e76ab98a35b9a8d58019191ea"
+    },
+    {
+      "path": "config/eu/symbols_main.txt",
+      "sha256": "af90dcba4061369ef7cb593c9a01a055a4f17908842786fce6a34b176e240ffa"
+    },
+    {
+      "path": "config/eu/stdwtitl.yaml",
+      "sha256": "357f225fc01f68d061da00d811643052c86cbf8233a00f9e94ecdd4b7129afab"
+    }
+  ],
+  "hashEncoding": "UTF-8 with LF line endings"
+}
