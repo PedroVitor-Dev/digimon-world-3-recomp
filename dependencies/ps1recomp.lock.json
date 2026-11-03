@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/PS1Recomp/ps1-recomp.git",
+  "commit": "ab4f0e01e6699c741bbc3d1ee73022be2803ff69",
+  "status": "evaluation-only",
+  "license": "GPL-3.0-or-later",
+  "portabilityPatch": {
+    "sha256": "df01948ce2c6afaa8d6199061137abd1ad8dcbde91c1dfe63860573e2b615bbf",
+    "path": "patches/ps1recomp-windows.patch"
+  },
+  "submodules": [
+    {
+      "commit": "7d30a22fc5aac06adfe7887ae57f3701b6b5f913",
+      "path": "third_party/ELFIO",
+      "license": "MIT"
+    },
+    {
+      "commit": "f99d53024782bf928b07839140862163f15ade5b",
+      "path": "third_party/fmt",
+      "license": "MIT"
+    },
+    {
+      "commit": "f68374efa7fd5bdadabb96eb8c980d43bb289b50",
+      "path": "third_party/googletest",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "commit": "b32a2fff0d27e1f7522f26a125101500ddb47156",
+      "path": "third_party/toml11",
+      "license": "MIT"
+    }
+  ]
+}

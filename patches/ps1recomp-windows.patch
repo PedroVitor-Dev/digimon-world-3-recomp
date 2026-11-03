@@ -1,0 +1,993 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 505aaa3..c702b58 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,6 +4,10 @@ project(PS1Recomp VERSION 0.1.0 LANGUAGES CXX)
+ set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
++# PS1 Memory instances exceed the default Windows stack in host/tests.
++if(MINGW)
++    add_link_options("-Wl,--stack,16777216")
++endif()
+ 
+ # AddressSanitizer (debug aid — heap/stack/global overflow detection).
+ # Enable with: cmake -B build-asan -DPS1RECOMP_ASAN=ON
+diff --git a/ps1Recomp/src/main.cpp b/ps1Recomp/src/main.cpp
+index 98caac2..5c60c32 100644
+--- a/ps1Recomp/src/main.cpp
++++ b/ps1Recomp/src/main.cpp
+@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
+     result_cpp += "#include <cstdint>\n";
+     // The fatal path in recomp_dispatch prints a host stack, because the
+     // guest RA is stale whenever the call came through a direct JAL.
+-    result_cpp += "#include <execinfo.h>\n";
++    result_cpp += "#include <runtime/host_backtrace.h>\n";
+     result_cpp += "#include <fmt/format.h>\n";
+     result_cpp += "#include <runtime/ps1_runtime_macros.h>\n";
+     result_cpp += "#include <runtime/cpu_context.h>\n";
+diff --git a/ps1Runtime/CMakeLists.txt b/ps1Runtime/CMakeLists.txt
+index d439eee..c000202 100644
+--- a/ps1Runtime/CMakeLists.txt
++++ b/ps1Runtime/CMakeLists.txt
+@@ -1,4 +1,12 @@
+ find_package(SDL2 REQUIRED)
++# SDL's package resolves short Windows paths back to Unicode long paths.
++# Keep the verified package location usable by MinGW Makefiles.
++if(WIN32 AND DEFINED DW3_SDL2_ROOT)
++    set_target_properties(SDL2::SDL2 PROPERTIES
++        IMPORTED_IMPLIB "${DW3_SDL2_ROOT}/lib/libSDL2.dll.a"
++        IMPORTED_LOCATION "${DW3_SDL2_ROOT}/bin/SDL2.dll"
++        INTERFACE_INCLUDE_DIRECTORIES "${DW3_SDL2_ROOT}/include/SDL2")
++endif()
+ find_package(OpenGL REQUIRED)
+ 
+ # Runtime library (shared between exe and tests)
+@@ -49,7 +57,7 @@ target_include_directories(ps1Runtime_lib
+ )
+ 
+ target_link_libraries(ps1Runtime_lib
+-    PUBLIC fmt::fmt
++    PUBLIC fmt::fmt SDL2::SDL2 OpenGL::GL
+ )
+ 
+ # Recompiled output generation (manual; see CONTRIBUTING.md)
+diff --git a/ps1Runtime/include/runtime/gpu/renderer_opengl.h b/ps1Runtime/include/runtime/gpu/renderer_opengl.h
+index d79e0f4..68abcf4 100644
+--- a/ps1Runtime/include/runtime/gpu/renderer_opengl.h
++++ b/ps1Runtime/include/runtime/gpu/renderer_opengl.h
+@@ -1,8 +1,8 @@
+ #pragma once
+ 
+ #include "runtime/gpu/gpu.h"
+-#include <GLES3/gl3.h> // Common desktop/mobile GL
+-#include <SDL2/SDL.h>
++#include <SDL_opengl.h> // Desktop GL types on Windows and Unix
++#include <SDL.h>
+ #include <string>
+ 
+ namespace ps1::gpu {
+diff --git a/ps1Runtime/include/runtime/host_backtrace.h b/ps1Runtime/include/runtime/host_backtrace.h
+new file mode 100644
+index 0000000..d93d048
+--- /dev/null
++++ b/ps1Runtime/include/runtime/host_backtrace.h
+@@ -0,0 +1,36 @@
++#pragma once
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#include <cstdio>
++#include <io.h>
++#include <cstdlib>
++inline int backtrace(void** frames, int count) {
++  return static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(count), frames, nullptr));
++}
++inline char** backtrace_symbols(void* const* frames, int count) {
++  if (count <= 0) return nullptr;
++  auto* block = static_cast<char**>(std::malloc(static_cast<size_t>(count) * (sizeof(char*) + 32)));
++  if (!block) return nullptr;
++  auto* text = reinterpret_cast<char*>(block + count);
++  for (int i = 0; i < count; ++i) {
++    block[i] = text + i * 32;
++    std::snprintf(block[i], 32, "%p", frames[i]);
++  }
++  return block;
++}
++inline void backtrace_symbols_fd(void* const* frames, int count, int fd) {
++  for (int i = 0; i < count; ++i) {
++    char line[40];
++    int n = std::snprintf(line, sizeof(line), "%p\n", frames[i]);
++    if (n > 0) _write(fd, line, static_cast<unsigned>(n));
++  }
++}
++#else
++#include <execinfo.h>
++#endif
+\ No newline at end of file
+diff --git a/ps1Runtime/src/bios/bios.cpp b/ps1Runtime/src/bios/bios.cpp
+index 1e8b768..b06a50f 100644
+--- a/ps1Runtime/src/bios/bios.cpp
++++ b/ps1Runtime/src/bios/bios.cpp
+@@ -10,7 +10,7 @@
+ #include <chrono>
+ #include <cstdlib>
+ #include <cstring>
+-#include <execinfo.h>
++#include "runtime/host_backtrace.h"
+ #include <fmt/format.h>
+ 
+ // Forward declare recomp_dispatch (defined in recompiled_out.cpp, global
+diff --git a/ps1Runtime/src/gpu/gpu.cpp b/ps1Runtime/src/gpu/gpu.cpp
+index 649d6fd..6796a70 100644
+--- a/ps1Runtime/src/gpu/gpu.cpp
++++ b/ps1Runtime/src/gpu/gpu.cpp
+@@ -1,5 +1,5 @@
+ #include "runtime/gpu/gpu.h"
+-#include <execinfo.h>
++#include "runtime/host_backtrace.h"
+ #include <cstdlib>
+ #include "runtime/metrics.h"
+ #include <algorithm>
+diff --git a/ps1Runtime/src/gpu/renderer_opengl.cpp b/ps1Runtime/src/gpu/renderer_opengl.cpp
+index b543ea5..5a08ea2 100644
+--- a/ps1Runtime/src/gpu/renderer_opengl.cpp
++++ b/ps1Runtime/src/gpu/renderer_opengl.cpp
+@@ -6,7 +6,111 @@
+ #ifndef GL_GLEXT_PROTOTYPES
+ #define GL_GLEXT_PROTOTYPES 1
+ #endif
+-#include <SDL2/SDL_opengl.h>
++#include <SDL_opengl.h>
++
++
++#ifdef _WIN32
++#include <SDL_opengl_glext.h>
++static PFNGLATTACHSHADERPROC dw3_glAttachShader = nullptr;
++#define glAttachShader dw3_glAttachShader
++static PFNGLBINDBUFFERPROC dw3_glBindBuffer = nullptr;
++#define glBindBuffer dw3_glBindBuffer
++static PFNGLBINDVERTEXARRAYPROC dw3_glBindVertexArray = nullptr;
++#define glBindVertexArray dw3_glBindVertexArray
++static PFNGLBUFFERDATAPROC dw3_glBufferData = nullptr;
++#define glBufferData dw3_glBufferData
++static PFNGLCOMPILESHADERPROC dw3_glCompileShader = nullptr;
++#define glCompileShader dw3_glCompileShader
++static PFNGLCREATEPROGRAMPROC dw3_glCreateProgram = nullptr;
++#define glCreateProgram dw3_glCreateProgram
++static PFNGLCREATESHADERPROC dw3_glCreateShader = nullptr;
++#define glCreateShader dw3_glCreateShader
++static PFNGLDELETEBUFFERSPROC dw3_glDeleteBuffers = nullptr;
++#define glDeleteBuffers dw3_glDeleteBuffers
++static PFNGLDELETEPROGRAMPROC dw3_glDeleteProgram = nullptr;
++#define glDeleteProgram dw3_glDeleteProgram
++static PFNGLDELETESHADERPROC dw3_glDeleteShader = nullptr;
++#define glDeleteShader dw3_glDeleteShader
++static PFNGLDELETEVERTEXARRAYSPROC dw3_glDeleteVertexArrays = nullptr;
++#define glDeleteVertexArrays dw3_glDeleteVertexArrays
++static PFNGLENABLEVERTEXATTRIBARRAYPROC dw3_glEnableVertexAttribArray = nullptr;
++#define glEnableVertexAttribArray dw3_glEnableVertexAttribArray
++static PFNGLGENBUFFERSPROC dw3_glGenBuffers = nullptr;
++#define glGenBuffers dw3_glGenBuffers
++static PFNGLGENVERTEXARRAYSPROC dw3_glGenVertexArrays = nullptr;
++#define glGenVertexArrays dw3_glGenVertexArrays
++static PFNGLGETPROGRAMINFOLOGPROC dw3_glGetProgramInfoLog = nullptr;
++#define glGetProgramInfoLog dw3_glGetProgramInfoLog
++static PFNGLGETPROGRAMIVPROC dw3_glGetProgramiv = nullptr;
++#define glGetProgramiv dw3_glGetProgramiv
++static PFNGLGETSHADERINFOLOGPROC dw3_glGetShaderInfoLog = nullptr;
++#define glGetShaderInfoLog dw3_glGetShaderInfoLog
++static PFNGLGETSHADERIVPROC dw3_glGetShaderiv = nullptr;
++#define glGetShaderiv dw3_glGetShaderiv
++static PFNGLGETUNIFORMLOCATIONPROC dw3_glGetUniformLocation = nullptr;
++#define glGetUniformLocation dw3_glGetUniformLocation
++static PFNGLLINKPROGRAMPROC dw3_glLinkProgram = nullptr;
++#define glLinkProgram dw3_glLinkProgram
++static PFNGLSHADERSOURCEPROC dw3_glShaderSource = nullptr;
++#define glShaderSource dw3_glShaderSource
++static PFNGLUNIFORM4FPROC dw3_glUniform4f = nullptr;
++#define glUniform4f dw3_glUniform4f
++static PFNGLUSEPROGRAMPROC dw3_glUseProgram = nullptr;
++#define glUseProgram dw3_glUseProgram
++static PFNGLVERTEXATTRIBPOINTERPROC dw3_glVertexAttribPointer = nullptr;
++#define glVertexAttribPointer dw3_glVertexAttribPointer
++static bool loadWindowsGL() {
++  dw3_glAttachShader = reinterpret_cast<PFNGLATTACHSHADERPROC>(SDL_GL_GetProcAddress("glAttachShader"));
++  if (!dw3_glAttachShader) { fmt::print(stderr, "[RendererGL] Missing glAttachShader\n"); return false; }
++  dw3_glBindBuffer = reinterpret_cast<PFNGLBINDBUFFERPROC>(SDL_GL_GetProcAddress("glBindBuffer"));
++  if (!dw3_glBindBuffer) { fmt::print(stderr, "[RendererGL] Missing glBindBuffer\n"); return false; }
++  dw3_glBindVertexArray = reinterpret_cast<PFNGLBINDVERTEXARRAYPROC>(SDL_GL_GetProcAddress("glBindVertexArray"));
++  if (!dw3_glBindVertexArray) { fmt::print(stderr, "[RendererGL] Missing glBindVertexArray\n"); return false; }
++  dw3_glBufferData = reinterpret_cast<PFNGLBUFFERDATAPROC>(SDL_GL_GetProcAddress("glBufferData"));
++  if (!dw3_glBufferData) { fmt::print(stderr, "[RendererGL] Missing glBufferData\n"); return false; }
++  dw3_glCompileShader = reinterpret_cast<PFNGLCOMPILESHADERPROC>(SDL_GL_GetProcAddress("glCompileShader"));
++  if (!dw3_glCompileShader) { fmt::print(stderr, "[RendererGL] Missing glCompileShader\n"); return false; }
++  dw3_glCreateProgram = reinterpret_cast<PFNGLCREATEPROGRAMPROC>(SDL_GL_GetProcAddress("glCreateProgram"));
++  if (!dw3_glCreateProgram) { fmt::print(stderr, "[RendererGL] Missing glCreateProgram\n"); return false; }
++  dw3_glCreateShader = reinterpret_cast<PFNGLCREATESHADERPROC>(SDL_GL_GetProcAddress("glCreateShader"));
++  if (!dw3_glCreateShader) { fmt::print(stderr, "[RendererGL] Missing glCreateShader\n"); return false; }
++  dw3_glDeleteBuffers = reinterpret_cast<PFNGLDELETEBUFFERSPROC>(SDL_GL_GetProcAddress("glDeleteBuffers"));
++  if (!dw3_glDeleteBuffers) { fmt::print(stderr, "[RendererGL] Missing glDeleteBuffers\n"); return false; }
++  dw3_glDeleteProgram = reinterpret_cast<PFNGLDELETEPROGRAMPROC>(SDL_GL_GetProcAddress("glDeleteProgram"));
++  if (!dw3_glDeleteProgram) { fmt::print(stderr, "[RendererGL] Missing glDeleteProgram\n"); return false; }
++  dw3_glDeleteShader = reinterpret_cast<PFNGLDELETESHADERPROC>(SDL_GL_GetProcAddress("glDeleteShader"));
++  if (!dw3_glDeleteShader) { fmt::print(stderr, "[RendererGL] Missing glDeleteShader\n"); return false; }
++  dw3_glDeleteVertexArrays = reinterpret_cast<PFNGLDELETEVERTEXARRAYSPROC>(SDL_GL_GetProcAddress("glDeleteVertexArrays"));
++  if (!dw3_glDeleteVertexArrays) { fmt::print(stderr, "[RendererGL] Missing glDeleteVertexArrays\n"); return false; }
++  dw3_glEnableVertexAttribArray = reinterpret_cast<PFNGLENABLEVERTEXATTRIBARRAYPROC>(SDL_GL_GetProcAddress("glEnableVertexAttribArray"));
++  if (!dw3_glEnableVertexAttribArray) { fmt::print(stderr, "[RendererGL] Missing glEnableVertexAttribArray\n"); return false; }
++  dw3_glGenBuffers = reinterpret_cast<PFNGLGENBUFFERSPROC>(SDL_GL_GetProcAddress("glGenBuffers"));
++  if (!dw3_glGenBuffers) { fmt::print(stderr, "[RendererGL] Missing glGenBuffers\n"); return false; }
++  dw3_glGenVertexArrays = reinterpret_cast<PFNGLGENVERTEXARRAYSPROC>(SDL_GL_GetProcAddress("glGenVertexArrays"));
++  if (!dw3_glGenVertexArrays) { fmt::print(stderr, "[RendererGL] Missing glGenVertexArrays\n"); return false; }
++  dw3_glGetProgramInfoLog = reinterpret_cast<PFNGLGETPROGRAMINFOLOGPROC>(SDL_GL_GetProcAddress("glGetProgramInfoLog"));
++  if (!dw3_glGetProgramInfoLog) { fmt::print(stderr, "[RendererGL] Missing glGetProgramInfoLog\n"); return false; }
++  dw3_glGetProgramiv = reinterpret_cast<PFNGLGETPROGRAMIVPROC>(SDL_GL_GetProcAddress("glGetProgramiv"));
++  if (!dw3_glGetProgramiv) { fmt::print(stderr, "[RendererGL] Missing glGetProgramiv\n"); return false; }
++  dw3_glGetShaderInfoLog = reinterpret_cast<PFNGLGETSHADERINFOLOGPROC>(SDL_GL_GetProcAddress("glGetShaderInfoLog"));
++  if (!dw3_glGetShaderInfoLog) { fmt::print(stderr, "[RendererGL] Missing glGetShaderInfoLog\n"); return false; }
++  dw3_glGetShaderiv = reinterpret_cast<PFNGLGETSHADERIVPROC>(SDL_GL_GetProcAddress("glGetShaderiv"));
++  if (!dw3_glGetShaderiv) { fmt::print(stderr, "[RendererGL] Missing glGetShaderiv\n"); return false; }
++  dw3_glGetUniformLocation = reinterpret_cast<PFNGLGETUNIFORMLOCATIONPROC>(SDL_GL_GetProcAddress("glGetUniformLocation"));
++  if (!dw3_glGetUniformLocation) { fmt::print(stderr, "[RendererGL] Missing glGetUniformLocation\n"); return false; }
++  dw3_glLinkProgram = reinterpret_cast<PFNGLLINKPROGRAMPROC>(SDL_GL_GetProcAddress("glLinkProgram"));
++  if (!dw3_glLinkProgram) { fmt::print(stderr, "[RendererGL] Missing glLinkProgram\n"); return false; }
++  dw3_glShaderSource = reinterpret_cast<PFNGLSHADERSOURCEPROC>(SDL_GL_GetProcAddress("glShaderSource"));
++  if (!dw3_glShaderSource) { fmt::print(stderr, "[RendererGL] Missing glShaderSource\n"); return false; }
++  dw3_glUniform4f = reinterpret_cast<PFNGLUNIFORM4FPROC>(SDL_GL_GetProcAddress("glUniform4f"));
++  if (!dw3_glUniform4f) { fmt::print(stderr, "[RendererGL] Missing glUniform4f\n"); return false; }
++  dw3_glUseProgram = reinterpret_cast<PFNGLUSEPROGRAMPROC>(SDL_GL_GetProcAddress("glUseProgram"));
++  if (!dw3_glUseProgram) { fmt::print(stderr, "[RendererGL] Missing glUseProgram\n"); return false; }
++  dw3_glVertexAttribPointer = reinterpret_cast<PFNGLVERTEXATTRIBPOINTERPROC>(SDL_GL_GetProcAddress("glVertexAttribPointer"));
++  if (!dw3_glVertexAttribPointer) { fmt::print(stderr, "[RendererGL] Missing glVertexAttribPointer\n"); return false; }
++  return true;
++}
++#endif
+ 
+ namespace ps1::gpu {
+ 
+@@ -75,6 +179,9 @@ bool RendererOpenGL::init(const std::string &windowTitle) {
+     return false;
+   }
+ 
++#ifdef _WIN32
++  if (!loadWindowsGL()) return false;
++#endif
+   SDL_GL_SetSwapInterval(1); // VSync on
+ 
+   GLuint vs = compileShader(GL_VERTEX_SHADER, VERTEX_SHADER_SRC);
+@@ -249,6 +356,13 @@ bool RendererOpenGL::processEvents() {
+ }
+ 
+ void RendererOpenGL::destroy() {
++#ifdef _WIN32
++  if (glContext_ && !dw3_glDeleteVertexArrays) {
++    SDL_GL_DeleteContext(glContext_); glContext_ = nullptr;
++    if (window_) { SDL_DestroyWindow(window_); window_ = nullptr; }
++    return;
++  }
++#endif
+   if (vao_) {
+     glDeleteVertexArrays(1, &vao_);
+     vao_ = 0;
+diff --git a/ps1Runtime/src/main_host.cpp b/ps1Runtime/src/main_host.cpp
+index ea693dc..35ef876 100644
+--- a/ps1Runtime/src/main_host.cpp
++++ b/ps1Runtime/src/main_host.cpp
+@@ -3,14 +3,23 @@
+ // Game code runs in separate thread; main thread handles SDL events + rendering
+ 
+ #include "runtime/ps1_runtime_macros.h"
+-#include <SDL2/SDL.h>
++#define SDL_MAIN_HANDLED
++#include <SDL.h>
+ #include <atomic>
+ #include <chrono>
+ #include <csignal>
++#ifndef _WIN32
+ #include <execinfo.h>
++#endif
++#ifndef _WIN32
+ #include <sys/mman.h>
++#endif
++#ifndef _WIN32
+ #include <ucontext.h>
++#endif
++#ifndef _WIN32
+ #include <unistd.h>
++#endif
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -31,8 +40,12 @@
+ #include <runtime/gpu/gpu.h>
+ #include <runtime/gpu/renderer_opengl.h>
+ #include <algorithm>
++#ifndef _WIN32
+ #include <execinfo.h>
++#endif
++#ifndef _WIN32
+ #include <pthread.h>
++#endif
+ #include <runtime/input/input.h>
+ #include <runtime/mdec/mdec.h>
+ #include <runtime/memory.h>
+@@ -72,6 +85,39 @@ static ps1::spu::SPU *g_spu = nullptr;
+ //                               inside a busy page otherwise drowns in its
+ //                               neighbours' traffic (def. the whole span).
+ // ---------------------------------------------------------------------------
++#ifdef _WIN32
++namespace {
++uint32_t g_guardArmAt = 0;
++bool g_guardArmed = false;
++void armWriteGuard() {}
++void dumpWriteGuard() {}
++void installWriteGuard(uint8_t*) {
++  if (std::getenv("PS1_WRITE_GUARD"))
++    fmt::print(stderr, "[Windows] PS1_WRITE_GUARD is unavailable in this diagnostic host.\n");
++}
++std::chrono::steady_clock::time_point g_runStart;
++// Hardware ticks actually issued: CDROM state machine plus the root counters.
++std::atomic<uint64_t> g_hwTicks{0};
++
++void reportClocks(uint64_t renderFrames) {
++  using namespace std::chrono;
++  const double secs =
++      duration_cast<milliseconds>(steady_clock::now() - g_runStart).count() /
++      1000.0;
++  if (secs <= 0.0)
++    return;
++  const uint32_t vsyncs =
++      ps1::psyq::psyq_state().vsyncCounter.load(std::memory_order_acquire);
++  const uint64_t hw = g_hwTicks.load(std::memory_order_relaxed);
++  fmt::print("[clocks] {:.1f}s  render {} ({:.1f}/s)  guest vblank {} ({:.1f}/s)"
++             "  hw tick {} ({:.1f}/s)\n",
++             secs, renderFrames, renderFrames / secs, vsyncs, vsyncs / secs, hw,
++             hw / secs);
++}
++
++
++} // namespace
++#else
+ namespace {
+ uint8_t *g_guardBase = nullptr;
+ std::size_t g_guardLen = 0;
+@@ -359,6 +405,7 @@ void installWriteGuard(uint8_t *ramPtr) {
+     armWriteGuard();
+ }
+ } // namespace
++#endif
+ 
+ // Forward declaration -- generated by ps1Recomp in recompiled_out.cpp
+ extern void recomp_init_dispatch_table();
+@@ -441,6 +488,7 @@ static constexpr uint32_t SCANLINES_PER_FRAME = 263;  // NTSC
+ // with an exported symbol, so a backtrace taken on the game thread names the
+ // func_XXXXXXXX it is stuck in.  A watchdog thread pokes SIGPROF at it and
+ // prints what the handler captured.
++#ifndef _WIN32
+ static void *g_stallFrames[32];
+ static int g_stallDepth = 0;
+ static std::atomic<bool> g_stallCaptured{false};
+@@ -450,6 +498,7 @@ static void stallSampler(int) {
+   g_stallCaptured.store(true, std::memory_order_release);
+ }
+ 
++#endif
+ static volatile std::sig_atomic_t g_shutdown_requested = 0;
+ static void onTerminate(int) { g_shutdown_requested = 1; }
+ 
+@@ -505,6 +554,8 @@ static uint32_t nsCategory(ps1::Memory &mem, uint32_t obj) {
+ }
+ 
+ int main(int argc, char *argv[]) {
++  SDL_SetMainReady();
++  std::setvbuf(stdout, nullptr, _IONBF, 0);
+   if (argc < 2) {
+     std::cerr << "Usage: ps1Runtime <ps1_elf_or_iso> [disc_image] [--config "
+                  "game.toml]\n"
+@@ -1319,6 +1370,7 @@ int main(int argc, char *argv[]) {
+     gameThreadDone.store(true, std::memory_order_release);
+   });
+ 
++#ifndef _WIN32
+   if (const char *everyMs = std::getenv("PS1_STALL_SAMPLE")) {
+     struct sigaction sa {};
+     sa.sa_handler = stallSampler;
+@@ -1346,6 +1398,11 @@ int main(int argc, char *argv[]) {
+     }).detach();
+   }
+ 
++#else
++  if (std::getenv("PS1_STALL_SAMPLE"))
++    fmt::print(stderr, "[Windows] PS1_STALL_SAMPLE is unavailable in this diagnostic host.\n");
++#endif
++
+   bool running = true;
+   while (running) {
+     // 1. Poll SDL2 Events
+diff --git a/ps1Test/analyzer/test_config_generator.cpp b/ps1Test/analyzer/test_config_generator.cpp
+index 6b4bff1..07d99a7 100644
+--- a/ps1Test/analyzer/test_config_generator.cpp
++++ b/ps1Test/analyzer/test_config_generator.cpp
+@@ -98,7 +98,7 @@ static void cleanupFile(const std::string& path) {
+ // Basic Generation Tests
+ 
+ TEST(ConfigGenerator, GeneratesValidTOML) {
+-    const std::string path = "/tmp/ps1recomp_test_config_basic.elf";
++    const std::string path = "./ps1recomp_test_config_basic.elf";
+ 
+     createTestElf(path, {
+         {"main",       0x80010000},
+@@ -133,7 +133,7 @@ TEST(ConfigGenerator, GeneratesValidTOML) {
+ }
+ 
+ TEST(ConfigGenerator, ContainsBinarySection) {
+-    const std::string path = "/tmp/ps1recomp_test_config_binary.elf";
++    const std::string path = "./ps1recomp_test_config_binary.elf";
+ 
+     createTestElf(path, {{"main", 0x80010000}});
+ 
+@@ -161,7 +161,7 @@ TEST(ConfigGenerator, ContainsBinarySection) {
+ }
+ 
+ TEST(ConfigGenerator, ContainsStatsSection) {
+-    const std::string path = "/tmp/ps1recomp_test_config_stats.elf";
++    const std::string path = "./ps1recomp_test_config_stats.elf";
+ 
+     createTestElf(path, {
+         {"main",        0x80010000},
+@@ -194,7 +194,7 @@ TEST(ConfigGenerator, ContainsStatsSection) {
+ // Function List Tests
+ 
+ TEST(ConfigGenerator, ListsGameFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_config_funcs.elf";
++    const std::string path = "./ps1recomp_test_config_funcs.elf";
+ 
+     createTestElf(path, {
+         {"main",         0x80010000},
+@@ -234,7 +234,7 @@ TEST(ConfigGenerator, ListsGameFunctions) {
+ // PsyQ Classification Tests
+ 
+ TEST(ConfigGenerator, SeparatesPsyQFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_config_psyq.elf";
++    const std::string path = "./ps1recomp_test_config_psyq.elf";
+ 
+     createTestElf(path, {
+         {"main",         0x80010000},
+@@ -304,8 +304,8 @@ TEST(ConfigGenerator, SeparatesPsyQFunctions) {
+ // File Write Test
+ 
+ TEST(ConfigGenerator, WritesToFile) {
+-    const std::string elfPath = "/tmp/ps1recomp_test_config_file.elf";
+-    const std::string outPath = "/tmp/ps1recomp_test_config_output.toml";
++    const std::string elfPath = "./ps1recomp_test_config_file.elf";
++    const std::string outPath = "./ps1recomp_test_config_output.toml";
+ 
+     createTestElf(elfPath, {{"main", 0x80010000}});
+ 
+@@ -332,7 +332,7 @@ TEST(ConfigGenerator, WritesToFile) {
+ }
+ 
+ TEST(ConfigGenerator, ReportsFileError) {
+-    const std::string elfPath = "/tmp/ps1recomp_test_config_err.elf";
++    const std::string elfPath = "./ps1recomp_test_config_err.elf";
+ 
+     createTestElf(elfPath, {{"main", 0x80010000}});
+ 
+@@ -357,7 +357,7 @@ TEST(ConfigGenerator, ReportsFileError) {
+ // Empty Input Test
+ 
+ TEST(ConfigGenerator, HandleEmptyAnalysis) {
+-    const std::string path = "/tmp/ps1recomp_test_config_empty.elf";
++    const std::string path = "./ps1recomp_test_config_empty.elf";
+ 
+     createTestElf(path, {}); // No symbols
+ 
+diff --git a/ps1Test/analyzer/test_elf_parser.cpp b/ps1Test/analyzer/test_elf_parser.cpp
+index 1b4b5df..f190a3e 100644
+--- a/ps1Test/analyzer/test_elf_parser.cpp
++++ b/ps1Test/analyzer/test_elf_parser.cpp
+@@ -115,7 +115,7 @@ static void cleanupFile(const std::string& path) {
+ // Basic Loading Tests
+ 
+ TEST(ElfParser, LoadValidPS1Elf) {
+-    const std::string path = "/tmp/ps1recomp_test_valid.elf";
++    const std::string path = "./ps1recomp_test_valid.elf";
+     createMinimalPS1Elf(path);
+ 
+     ElfParser parser;
+@@ -128,13 +128,13 @@ TEST(ElfParser, LoadValidPS1Elf) {
+ 
+ TEST(ElfParser, RejectNonExistentFile) {
+     ElfParser parser;
+-    EXPECT_FALSE(parser.load("/tmp/does_not_exist_at_all.elf"));
++    EXPECT_FALSE(parser.load("./does_not_exist_at_all.elf"));
+     EXPECT_FALSE(parser.isLoaded());
+     EXPECT_FALSE(parser.getError().empty());
+ }
+ 
+ TEST(ElfParser, RejectGarbageFile) {
+-    const std::string path = "/tmp/ps1recomp_test_garbage.bin";
++    const std::string path = "./ps1recomp_test_garbage.bin";
+     {
+         std::ofstream f(path, std::ios::binary);
+         const char garbage[] = "this is definitely not an ELF file";
+@@ -149,7 +149,7 @@ TEST(ElfParser, RejectGarbageFile) {
+ }
+ 
+ TEST(ElfParser, RejectEmptyFile) {
+-    const std::string path = "/tmp/ps1recomp_test_empty.bin";
++    const std::string path = "./ps1recomp_test_empty.bin";
+     { std::ofstream f(path, std::ios::binary); }
+ 
+     ElfParser parser;
+@@ -161,7 +161,7 @@ TEST(ElfParser, RejectEmptyFile) {
+ // Entry Point Tests
+ 
+ TEST(ElfParser, EntryPointKSEG0) {
+-    const std::string path = "/tmp/ps1recomp_test_kseg0.elf";
++    const std::string path = "./ps1recomp_test_kseg0.elf";
+     createMinimalPS1Elf(path, 0x80010000);
+ 
+     ElfParser parser;
+@@ -172,7 +172,7 @@ TEST(ElfParser, EntryPointKSEG0) {
+ }
+ 
+ TEST(ElfParser, EntryPointKUSEG) {
+-    const std::string path = "/tmp/ps1recomp_test_kuseg.elf";
++    const std::string path = "./ps1recomp_test_kuseg.elf";
+     createMinimalPS1Elf(path, 0x00010000);
+ 
+     ElfParser parser;
+@@ -184,7 +184,7 @@ TEST(ElfParser, EntryPointKUSEG) {
+ 
+ TEST(ElfParser, RejectBadEntryPoint) {
+     // Entry point outside RAM range
+-    const std::string path = "/tmp/ps1recomp_test_bad_entry.elf";
++    const std::string path = "./ps1recomp_test_bad_entry.elf";
+     createMinimalPS1Elf(path, 0xDEADBEEF);
+ 
+     ElfParser parser;
+@@ -197,7 +197,7 @@ TEST(ElfParser, RejectBadEntryPoint) {
+ // Section Extraction Tests
+ 
+ TEST(ElfParser, ExtractSections) {
+-    const std::string path = "/tmp/ps1recomp_test_sections.elf";
++    const std::string path = "./ps1recomp_test_sections.elf";
+     createMinimalPS1Elf(path);
+ 
+     ElfParser parser;
+@@ -232,7 +232,7 @@ TEST(ElfParser, ExtractSections) {
+ }
+ 
+ TEST(ElfParser, GetTextSection) {
+-    const std::string path = "/tmp/ps1recomp_test_textsec.elf";
++    const std::string path = "./ps1recomp_test_textsec.elf";
+     createMinimalPS1Elf(path);
+ 
+     ElfParser parser;
+@@ -247,7 +247,7 @@ TEST(ElfParser, GetTextSection) {
+ }
+ 
+ TEST(ElfParser, FindSectionByAddress) {
+-    const std::string path = "/tmp/ps1recomp_test_findaddr.elf";
++    const std::string path = "./ps1recomp_test_findaddr.elf";
+     createMinimalPS1Elf(path, 0x80010000);
+ 
+     ElfParser parser;
+@@ -284,7 +284,7 @@ TEST(ElfParser, SectionContainsAddress) {
+ // Symbol Extraction Tests
+ 
+ TEST(ElfParser, ExtractSymbols) {
+-    const std::string path = "/tmp/ps1recomp_test_symbols.elf";
++    const std::string path = "./ps1recomp_test_symbols.elf";
+     createMinimalPS1Elf(path, 0x80010000, true);
+ 
+     ElfParser parser;
+@@ -320,7 +320,7 @@ TEST(ElfParser, ExtractSymbols) {
+ }
+ 
+ TEST(ElfParser, NoSymbolsGraceful) {
+-    const std::string path = "/tmp/ps1recomp_test_nosyms.elf";
++    const std::string path = "./ps1recomp_test_nosyms.elf";
+     createMinimalPS1Elf(path, 0x80010000, false);
+ 
+     ElfParser parser;
+@@ -336,7 +336,7 @@ TEST(ElfParser, NoSymbolsGraceful) {
+ // Size Calculation Tests
+ 
+ TEST(ElfParser, TotalCodeSize) {
+-    const std::string path = "/tmp/ps1recomp_test_codesize.elf";
++    const std::string path = "./ps1recomp_test_codesize.elf";
+     createMinimalPS1Elf(path);
+ 
+     ElfParser parser;
+@@ -348,7 +348,7 @@ TEST(ElfParser, TotalCodeSize) {
+ }
+ 
+ TEST(ElfParser, TotalDataSize) {
+-    const std::string path = "/tmp/ps1recomp_test_datasize.elf";
++    const std::string path = "./ps1recomp_test_datasize.elf";
+     createMinimalPS1Elf(path);
+ 
+     ElfParser parser;
+diff --git a/ps1Test/analyzer/test_function_finder.cpp b/ps1Test/analyzer/test_function_finder.cpp
+index 53abad9..3cb56f1 100644
+--- a/ps1Test/analyzer/test_function_finder.cpp
++++ b/ps1Test/analyzer/test_function_finder.cpp
+@@ -192,7 +192,7 @@ TEST(MipsHelpers, NOPDetection) {
+ // Function Finder -- Entry Point Detection
+ 
+ TEST(FunctionFinder, DetectsEntryPoint) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_entry.elf";
++    const std::string path = "./ps1recomp_test_ff_entry.elf";
+     std::vector<uint32_t> code = {makeNOP(), makeNOP(), makeJR_RA(), makeNOP()};
+     createElfWithCode(path, code);
+ 
+@@ -214,7 +214,7 @@ TEST(FunctionFinder, DetectsEntryPoint) {
+ // Function Finder -- JAL Target Detection
+ 
+ TEST(FunctionFinder, DetectsJALTargets) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_jal.elf";
++    const std::string path = "./ps1recomp_test_ff_jal.elf";
+ 
+     // Code at 0x80010000:
+     // func_A: JAL func_B (at +0x20), NOP, JR $ra, NOP
+@@ -250,7 +250,7 @@ TEST(FunctionFinder, DetectsJALTargets) {
+ // Function Finder -- Symbol Detection
+ 
+ TEST(FunctionFinder, DetectsSymbolFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_syms.elf";
++    const std::string path = "./ps1recomp_test_ff_syms.elf";
+ 
+     std::vector<uint32_t> code(32, makeNOP());
+     code[7]  = makeJR_RA(); // end of func at +0x00
+@@ -286,7 +286,7 @@ TEST(FunctionFinder, DetectsSymbolFunctions) {
+ // Function Finder -- Prologue Detection
+ 
+ TEST(FunctionFinder, DetectsProloguePatterns) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_prologue.elf";
++    const std::string path = "./ps1recomp_test_ff_prologue.elf";
+ 
+     // Two functions:
+     // func_A (at +0): ADDIU $sp, $sp, -32 ... JR $ra, NOP
+@@ -315,7 +315,7 @@ TEST(FunctionFinder, DetectsProloguePatterns) {
+ // Function Finder -- Computed Jump Arrays
+ 
+ TEST(FunctionFinder, DetectsComputedJumpArraySlots) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_jump_array.elf";
++    const std::string path = "./ps1recomp_test_ff_jump_array.elf";
+ 
+     // `jr $t0` with $t0 = 0x80010020 + idx*8. Each 8-byte slot returns on its
+     // own, so each is a function -- and nothing else in the image points at
+@@ -347,7 +347,7 @@ TEST(FunctionFinder, DetectsComputedJumpArraySlots) {
+ }
+ 
+ TEST(FunctionFinder, JumpIslandsAreNotEntryPoints) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_jump_island.elf";
++    const std::string path = "./ps1recomp_test_ff_jump_island.elf";
+ 
+     // Same computed jump, but each slot is `bgez $zero, far` + delay slot --
+     // a jump island, which belongs to the function around it. No slot
+@@ -375,7 +375,7 @@ TEST(FunctionFinder, JumpIslandsAreNotEntryPoints) {
+ }
+ 
+ TEST(FunctionFinder, JumpArrayStopsAtADelaySlot) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_jump_array_tail.elf";
++    const std::string path = "./ps1recomp_test_ff_jump_array_tail.elf";
+ 
+     // The last slot is longer than the nominal stride, so `base + 2*8` lands
+     // on the delay slot of its `jr $ra`. That word is not an entry point and
+@@ -405,7 +405,7 @@ TEST(FunctionFinder, JumpArrayStopsAtADelaySlot) {
+ // Function Finder -- Boundary Computation
+ 
+ TEST(FunctionFinder, ComputesSizes) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_sizes.elf";
++    const std::string path = "./ps1recomp_test_ff_sizes.elf";
+ 
+     // Three known functions via symbols
+     std::vector<uint32_t> code(24, makeNOP());
+@@ -437,7 +437,7 @@ TEST(FunctionFinder, ComputesSizes) {
+ }
+ 
+ TEST(FunctionFinder, RecomputeBoundariesAssignsSizeToLateAddedFunction) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_recompute.elf";
++    const std::string path = "./ps1recomp_test_ff_recompute.elf";
+ 
+     // Three known functions via symbols at +0x00, +0x20, +0x50.
+     // We will later inject a fourth at +0x40 via addFunction.
+@@ -476,7 +476,7 @@ TEST(FunctionFinder, RecomputeBoundariesAssignsSizeToLateAddedFunction) {
+ // Function Finder -- Leaf Detection
+ 
+ TEST(FunctionFinder, DetectsLeafFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_leaf.elf";
++    const std::string path = "./ps1recomp_test_ff_leaf.elf";
+ 
+     // func_a (leaf): no JAL, just NOP + JR $ra
+     // func_b (non-leaf): has JAL + JR $ra
+@@ -514,7 +514,7 @@ TEST(FunctionFinder, DetectsLeafFunctions) {
+ // Function Finder -- findContaining
+ 
+ TEST(FunctionFinder, FindContaining) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_containing.elf";
++    const std::string path = "./ps1recomp_test_ff_containing.elf";
+ 
+     std::vector<uint32_t> code(16, makeNOP());
+     std::vector<std::pair<std::string, uint32_t>> syms = {
+@@ -546,7 +546,7 @@ TEST(FunctionFinder, FindContaining) {
+ // Function Finder -- Empty Section
+ 
+ TEST(FunctionFinder, HandlesEmptyCode) {
+-    const std::string path = "/tmp/ps1recomp_test_ff_empty.elf";
++    const std::string path = "./ps1recomp_test_ff_empty.elf";
+ 
+     // Section with only NOPs (minimal)
+     std::vector<uint32_t> code = {makeNOP()};
+diff --git a/ps1Test/analyzer/test_psyq_hash_matching.cpp b/ps1Test/analyzer/test_psyq_hash_matching.cpp
+index d3a3b8c..853a51d 100644
+--- a/ps1Test/analyzer/test_psyq_hash_matching.cpp
++++ b/ps1Test/analyzer/test_psyq_hash_matching.cpp
+@@ -310,7 +310,7 @@ TEST(PsyqHashLoader, DetectsSyntheticBodyMatchingLoadedFullHash) {
+     std::snprintf(hex, sizeof(hex), "%016llx",
+                   static_cast<unsigned long long>(hf));
+ 
+-    const std::string tmpToml = "/tmp/ps1recomp_test_psyq_synth.toml";
++    const std::string tmpToml = "./ps1recomp_test_psyq_synth.toml";
+     {
+         std::ofstream out(tmpToml);
+         out << "[[signature]]\n"
+@@ -325,7 +325,7 @@ TEST(PsyqHashLoader, DetectsSyntheticBodyMatchingLoadedFullHash) {
+             << "sources     = [\"synthetic\"]\n";
+     }
+ 
+-    const std::string elfPath = "/tmp/ps1recomp_test_psyq_synth.elf";
++    const std::string elfPath = "./ps1recomp_test_psyq_synth.elf";
+     writeSyntheticElf(elfPath, FUNC_ADDR, body);
+ 
+     PsyQMatcher matcher;
+@@ -390,7 +390,7 @@ TEST(PsyqHashLoader, MaskedHashIgnoresImmediateRelocation) {
+     std::snprintf(hex, sizeof(hex), "%016llx",
+                   static_cast<unsigned long long>(hmA));
+ 
+-    const std::string tmpToml = "/tmp/ps1recomp_test_psyq_masked.toml";
++    const std::string tmpToml = "./ps1recomp_test_psyq_masked.toml";
+     {
+         std::ofstream out(tmpToml);
+         out << "[[signature]]\n"
+@@ -410,7 +410,7 @@ TEST(PsyqHashLoader, MaskedHashIgnoresImmediateRelocation) {
+ 
+     // Detect bodyA.
+     {
+-        const std::string elfPath = "/tmp/ps1recomp_test_psyq_masked_a.elf";
++        const std::string elfPath = "./ps1recomp_test_psyq_masked_a.elf";
+         writeSyntheticElf(elfPath, FUNC_ADDR, bodyA);
+         ElfParser elf; ASSERT_TRUE(elf.load(elfPath));
+         FunctionFinder finder; finder.findFunctions(elf);
+@@ -424,7 +424,7 @@ TEST(PsyqHashLoader, MaskedHashIgnoresImmediateRelocation) {
+ 
+     // Detect bodyB (different imm) -- same hash, same match.
+     {
+-        const std::string elfPath = "/tmp/ps1recomp_test_psyq_masked_b.elf";
++        const std::string elfPath = "./ps1recomp_test_psyq_masked_b.elf";
+         writeSyntheticElf(elfPath, FUNC_ADDR, bodyB);
+         ElfParser elf; ASSERT_TRUE(elf.load(elfPath));
+         FunctionFinder finder; finder.findFunctions(elf);
+@@ -501,7 +501,7 @@ TEST(PsyqHashLoader, CollidingMaskedHashIsDroppedFromLiveMap) {
+         return std::string(buf);
+     };
+ 
+-    const std::string tmpToml = "/tmp/ps1recomp_test_psyq_collision_masked.toml";
++    const std::string tmpToml = "./ps1recomp_test_psyq_collision_masked.toml";
+     {
+         std::ofstream out(tmpToml);
+         out << "[[signature]]\n"
+@@ -536,7 +536,7 @@ TEST(PsyqHashLoader, CollidingMaskedHashIsDroppedFromLiveMap) {
+     // that the bodies resolve to the *correct* base name.
+     ASSERT_TRUE(matcher.loadFromToml(tmpToml, ""));
+ 
+-    const std::string elfPath = "/tmp/ps1recomp_test_psyq_collision_masked.elf";
++    const std::string elfPath = "./ps1recomp_test_psyq_collision_masked.elf";
+     writeSyntheticElf(elfPath, FUNC_ADDR, bodyA);
+     ElfParser elf; ASSERT_TRUE(elf.load(elfPath));
+     FunctionFinder finder; finder.findFunctions(elf);
+@@ -575,7 +575,7 @@ TEST(PsyqHashLoader, FullyCollidingPairDropsBothFromMatching) {
+         return std::string(buf);
+     };
+ 
+-    const std::string tmpToml = "/tmp/ps1recomp_test_psyq_full_collision.toml";
++    const std::string tmpToml = "./ps1recomp_test_psyq_full_collision.toml";
+     {
+         std::ofstream out(tmpToml);
+         for (const char* name : {"WrapperX", "WrapperY"}) {
+@@ -595,7 +595,7 @@ TEST(PsyqHashLoader, FullyCollidingPairDropsBothFromMatching) {
+     PsyQMatcher matcher;
+     ASSERT_TRUE(matcher.loadFromToml(tmpToml, ""));
+ 
+-    const std::string elfPath = "/tmp/ps1recomp_test_psyq_full_collision.elf";
++    const std::string elfPath = "./ps1recomp_test_psyq_full_collision.elf";
+     writeSyntheticElf(elfPath, FUNC_ADDR, body);
+     ElfParser elf; ASSERT_TRUE(elf.load(elfPath));
+     FunctionFinder finder; finder.findFunctions(elf);
+diff --git a/ps1Test/analyzer/test_psyq_signatures.cpp b/ps1Test/analyzer/test_psyq_signatures.cpp
+index e4ed113..ef8a75e 100644
+--- a/ps1Test/analyzer/test_psyq_signatures.cpp
++++ b/ps1Test/analyzer/test_psyq_signatures.cpp
+@@ -159,7 +159,7 @@ TEST(PsyQMatcher, ClassifyOther) {
+ // Name Matching Tests
+ 
+ TEST(PsyQMatcher, MatchGraphicsFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_psyq_gfx.elf";
++    const std::string path = "./ps1recomp_test_psyq_gfx.elf";
+ 
+     createPsyQElf(path, {
+         {"main",         0x80010000},
+@@ -189,7 +189,7 @@ TEST(PsyQMatcher, MatchGraphicsFunctions) {
+ }
+ 
+ TEST(PsyQMatcher, MatchSoundFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_psyq_snd.elf";
++    const std::string path = "./ps1recomp_test_psyq_snd.elf";
+ 
+     createPsyQElf(path, {
+         {"main",     0x80010000},
+@@ -220,7 +220,7 @@ TEST(PsyQMatcher, MatchSoundFunctions) {
+ }
+ 
+ TEST(PsyQMatcher, MatchPassthroughs) {
+-    const std::string path = "/tmp/ps1recomp_test_psyq_pass.elf";
++    const std::string path = "./ps1recomp_test_psyq_pass.elf";
+ 
+     createPsyQElf(path, {
+         {"main",   0x80010000},
+@@ -248,7 +248,7 @@ TEST(PsyQMatcher, MatchPassthroughs) {
+ }
+ 
+ TEST(PsyQMatcher, NoMatchForGameFunctions) {
+-    const std::string path = "/tmp/ps1recomp_test_psyq_game.elf";
++    const std::string path = "./ps1recomp_test_psyq_game.elf";
+ 
+     createPsyQElf(path, {
+         {"main",           0x80010000},
+@@ -357,12 +357,12 @@ TEST(PsyQMatcher, Pass3DoesNotMatchUnrelatedFunction) {
+     // A function with only NOPs -- should NOT match any signature
+     constexpr uint32_t FUNC_ADDR = 0x80070000;
+ 
+-    createSyntheticELF("/tmp/ps1recomp_test_psyq_p3_nop.elf",
++    createSyntheticELF("./ps1recomp_test_psyq_p3_nop.elf",
+         {{"func_80070000", FUNC_ADDR}},
+         {} /* no injected instructions -- all NOPs */);
+ 
+     ElfParser elf;
+-    ASSERT_TRUE(elf.load("/tmp/ps1recomp_test_psyq_p3_nop.elf"));
++    ASSERT_TRUE(elf.load("./ps1recomp_test_psyq_p3_nop.elf"));
+ 
+     FunctionFinder finder;
+     finder.findFunctions(elf);
+@@ -374,7 +374,7 @@ TEST(PsyQMatcher, Pass3DoesNotMatchUnrelatedFunction) {
+     EXPECT_EQ(matcher.getMatchCount(), 0u)
+         << "NOP-only function should not match any PsyQ signature";
+ 
+-    std::remove("/tmp/ps1recomp_test_psyq_p3_nop.elf");
++    std::remove("./ps1recomp_test_psyq_p3_nop.elf");
+ }
+ 
+ // String Helper Tests
+diff --git a/ps1Test/pipeline/test_pipeline.cpp b/ps1Test/pipeline/test_pipeline.cpp
+index 28df3a5..b0646bc 100644
+--- a/ps1Test/pipeline/test_pipeline.cpp
++++ b/ps1Test/pipeline/test_pipeline.cpp
+@@ -46,6 +46,9 @@ TEST(PipelineE2E, EndToEndSimulation) {
+ }
+ 
+ TEST(PipelineE2E, SmokeTest100Frames) {
++#ifdef _WIN32
++  GTEST_SKIP() << "Upstream POSIX timeout smoke harness is not implemented on Windows.";
++#else
+   // To truly run 100 frames, we would need to invoke the recompiled output.
+   // However, C++ doesn't easily let us call functions from a generated .cpp
+   // within the same build step before it's linked, and GoogleTest runs
+@@ -66,4 +69,5 @@ TEST(PipelineE2E, SmokeTest100Frames) {
+                       "/dev/null 2>&1");
+   // timeout exits with 124 when interrupted, instead of 0
+   EXPECT_EQ(WEXITSTATUS(result), 124);
++#endif
+ }
+diff --git a/ps1Test/runtime/test_config.cpp b/ps1Test/runtime/test_config.cpp
+index 0ee6041..d33f9ce 100644
+--- a/ps1Test/runtime/test_config.cpp
++++ b/ps1Test/runtime/test_config.cpp
+@@ -11,7 +11,7 @@ protected:
+   std::string tmpPath;
+ 
+   void SetUp() override {
+-    tmpPath = std::filesystem::temp_directory_path() / "ps1_test_config.toml";
++    tmpPath = (std::filesystem::temp_directory_path() / "ps1_test_config.toml").string();
+   }
+   void TearDown() override { std::remove(tmpPath.c_str()); }
+ };
+diff --git a/ps1Test/runtime/test_golden_frame.cpp b/ps1Test/runtime/test_golden_frame.cpp
+index 6ac9e94..89374f8 100644
+--- a/ps1Test/runtime/test_golden_frame.cpp
++++ b/ps1Test/runtime/test_golden_frame.cpp
+@@ -94,7 +94,7 @@ TEST(GoldenFrame, CrashRendersContentAtFrame400) {
+   if (!exists(runtime))
+     GTEST_SKIP() << "ps1Runtime binary not found. Skipping.";
+ 
+-  const std::string ppm = "/tmp/ps1_golden_frame_test.ppm";
++  const std::string ppm = "./ps1_golden_frame_test.ppm";
+   std::remove(ppm.c_str());
+ 
+   // Needs a real display.  `dummy` has no OpenGL at all -- the runtime exits
+diff --git a/ps1Test/runtime/test_metrics.cpp b/ps1Test/runtime/test_metrics.cpp
+index 080ab6e..ffbeb88 100644
+--- a/ps1Test/runtime/test_metrics.cpp
++++ b/ps1Test/runtime/test_metrics.cpp
+@@ -54,7 +54,7 @@ TEST_F(MetricsTest, DumpJsonWritesCountersAndState) {
+   ps1::metrics::count("frames", 42);
+   ps1::metrics::setState("display.y", -7);
+ 
+-  const char *path = "/tmp/ps1_metrics_dump_test.json";
++  const char *path = "./ps1_metrics_dump_test.json";
+   std::remove(path);
+   ASSERT_TRUE(ps1::metrics::dumpJsonTo(path));
+ 
+diff --git a/ps1Test/runtime/test_psyq_cd.cpp b/ps1Test/runtime/test_psyq_cd.cpp
+index ee3e785..3df09b0 100644
+--- a/ps1Test/runtime/test_psyq_cd.cpp
++++ b/ps1Test/runtime/test_psyq_cd.cpp
+@@ -32,18 +32,19 @@ class PsyqCdTest : public ::testing::Test {
+ protected:
+   Memory mem;
+   recomp_context ctx;
+-  cdrom::VirtualFs fs;
++  std::unique_ptr<cdrom::VirtualFs> fs;
+   cdrom::CdromController cdrom;
+   std::unique_ptr<bios::Bios> bios;
+   std::filesystem::path discPath;
+ 
+   void SetUp() override {
++    fs = std::make_unique<cdrom::VirtualFs>();
+     ctx.reset();
+     ctx.mem = &mem;
+     // A yield point only dispatches when the guest has a usable stack, so
+     // give the fixture one -- the top of main RAM, where PS1 stacks live.
+     ctx.r29 = 0x801FFFF0;
+-    bios = std::make_unique<bios::Bios>(ctx, fs, mem);
++    bios = std::make_unique<bios::Bios>(ctx, *fs, mem);
+     bios->setCdromController(&cdrom);
+     ctx.bios = bios.get();
+ 
+@@ -60,6 +61,9 @@ protected:
+ 
+   void TearDown() override {
+     psyq::psyq_state().reset();
++    cdrom.attachVirtualFs(nullptr);
++    bios.reset();
++    fs.reset(); // Windows requires closing the image before removing it.
+     if (!discPath.empty())
+       std::filesystem::remove(discPath);
+   }
+@@ -83,8 +87,8 @@ protected:
+     out.write(reinterpret_cast<const char *>(data.data()), data.size());
+     out.close();
+ 
+-    ASSERT_TRUE(fs.loadDisc(discPath));
+-    cdrom.attachVirtualFs(&fs);
++    ASSERT_TRUE(fs->loadDisc(discPath));
++    cdrom.attachVirtualFs(fs.get());
+   }
+ 
+   // CdlSetloc via the register interface (M:S:F, BCD), ACK'd like the
+@@ -664,6 +668,7 @@ TEST_F(PsyqCdTest, RegisterLibcdExposesAll12FunctionsViaDispatch) {
+   configure(cfg);
+ 
+   for (const char *n : names) {
++    fs = std::make_unique<cdrom::VirtualFs>();
+     ctx.reset();
+     ctx.mem = &mem;
+     ctx.bios = bios.get();

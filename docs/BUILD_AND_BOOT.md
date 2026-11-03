@@ -1,5 +1,7 @@
 # Build reproduzível e prova de boot
 
+> Atualização do passo 2: toolchain C++20 portátil e candidato fixado para avaliação Windows; provas restritas passaram até a entrada principal após InitHeap. O boot completo continua pendente. Consulte [as evidências e decisões atualizadas](NATIVE_BRINGUP.md). As decisões iniciais abaixo registram o ponto de partida.
+
 ## Disponível agora
 
 Ambiente atual: Windows x64, PowerShell e compilador C# do .NET Framework em `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. O launcher tem como requisito .NET Framework 4.8. A inspeção não encontrou SDK .NET instalado, C++/CMake/Ninja no PATH nem CMake/Vulkan SDK nos caminhos padrão consultados; isso não exclui instalações em outros locais.

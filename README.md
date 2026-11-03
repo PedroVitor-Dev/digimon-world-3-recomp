@@ -44,12 +44,25 @@ After preparing the supplied copy, verify its actual image and executable hashes
 .\scripts\verify-profile.ps1
 ```
 
-The default profile is `profiles/dw3-sles04936-local-translation.json`. It is an identity record, not a function map or a ready-to-use recompiler configuration. An unknown or modified image needs a separate reviewed profile. No backend has been selected or pinned yet.
+The default profile is `profiles/dw3-sles04936-local-translation.json`. It is an identity record, not a function map or a ready-to-use recompiler configuration. An unknown or modified image needs a separate reviewed profile. A PS1Recomp candidate is pinned for Windows evaluation; it has not been adopted as a playable runtime.
+
+## Native bring-up (step 2 in progress)
+
+A pinned C++20 toolchain and Windows diagnostic adaptation are available. See [native build evidence and remaining work](docs/NATIVE_BRINGUP.md).
+
+```powershell
+.\scripts\build-candidate.ps1
+.\scripts\test-native.ps1
+.\scripts\analyze-game.ps1
+.\scripts\probe-startup.ps1 -ThroughHeap
+```
+
+The probe recompiles a small inspected startup region, executes the InitHeap wrapper through BIOS HLE, then deliberately stops before game main. **No game screen or playable boot has been verified.** The full heuristic output was rejected because it includes invalid instructions and empty call stubs. The diagnostic renderer is OpenGL; the product Vulkan target remains pending.
 
 ## Local data and contributions
 
-`roms/`, `local/` and `build/` are ignored by Git. Keep original and generated game data there. Do not commit extracted executables or disc images. Preparation artifacts contain local paths and game-derived data and should remain local.
+`roms/`, `bios/`, `local/` and `build/` are ignored by Git. Keep original and generated game data there. Do not commit extracted executables or disc images. Preparation artifacts contain local paths and game-derived data and should remain local.
 
 Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `build:`). Keep relevant changes in separate commits. Push is performed manually by the repository owner.
 
-GPL-3.0; see LICENSE. No third-party recompiler code is bundled.
+GPL-3.0; see LICENSE. The Windows evaluation patch contains modifications to GPL-3.0-or-later PS1Recomp; the full upstream checkout and binary tools remain local. See the dependency locks and native bring-up document.

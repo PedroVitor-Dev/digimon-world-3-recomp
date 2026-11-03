@@ -1,5 +1,7 @@
 # Arquitetura inicial — decisão de 2026-11-03
 
+> Atualização do passo 2: toolchain C++20 portátil e candidato fixado para avaliação Windows; provas restritas passaram até a entrada principal após InitHeap. O boot completo continua pendente. Consulte [as evidências e decisões atualizadas](NATIVE_BRINGUP.md). As decisões iniciais abaixo registram o ponto de partida.
+
 Estado: arquitetura aceita para iniciar a prova de boot. Os módulos futuros descritos aqui ainda não foram implementados. O código existente continua em `src/Disc.cs` e `src/Program.cs`; não vamos criar projetos vazios nem mover arquivos antes de existir necessidade concreta.
 
 ## Produto e limites

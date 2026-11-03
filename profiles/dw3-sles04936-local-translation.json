@@ -21,13 +21,23 @@
     "dumpPrepared": true,
     "nativeBootVerified": false,
     "gameplayVerified": false,
-    "unmodifiedReferenceCompared": false
+    "unmodifiedReferenceCompared": false,
+    "nativeStartupProbeVerified": true
   },
   "analysis": {
     "functionMap": null,
     "overlayMap": null,
     "biosCallMap": null,
     "timingModel": null,
-    "recompilerDependencyLock": null
+    "recompilerDependencyLock": null,
+    "candidateAnalysis": {
+      "functionCandidates": 938,
+      "acceptedGenerationProfile": false,
+      "description": "Restricted startup and InitHeap only; game main was not executed.",
+      "nativeProbeBoundary": "0x80014524",
+      "psyqMatches": 133,
+      "overlayCandidates": 312,
+      "proFiles": 318
+    }
   }
 }

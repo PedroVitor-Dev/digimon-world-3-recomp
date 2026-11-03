@@ -13,9 +13,11 @@ Windows launcher and CLI, ISO9660 inventory, SYSTEM.CNF boot discovery, PS-X EXE
 
 This completes the architectural definition and copy identification. It does not complete function discovery, select a recompiler or demonstrate a native boot.
 
-## 2. First native boot — next
+## 2. First native boot — in progress
 
-Validate the C++ toolchain. Review a candidate recompiler's source, license, Windows build and instruction/overlay semantics; pin its revision before integration. PS1Recomp remains a candidate, not an adopted dependency.
+The C++20 toolchain and Windows diagnostic build are validated. The restricted startup probe reaches the main-entry boundary after InitHeap; a real game screen remains unverified. See [the evidence and commands](NATIVE_BRINGUP.md). The candidate is pinned for evaluation, not adopted as the final runtime.
+
+Continue reviewing a candidate recompiler's source, license, Windows build and instruction/overlay semantics; retain the pinned revision and reviewed portability patch. PS1Recomp remains a candidate, not an adopted game runtime.
 
 Map the entry point, reachable functions, code/data, BIOS calls, indirect branches and dynamically loaded modules. Generate and compile a controlled function set. Integrate required PS1 services and compare boot traces with a reference execution.
 

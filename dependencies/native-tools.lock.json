@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "name": "w64devkit",
+      "version": "2.11.0",
+      "url": "https://github.com/skeeto/w64devkit/releases/download/v2.11.0/w64devkit-x64-2.11.0.7z.exe",
+      "archive": "w64devkit-x64-2.11.0.7z.exe",
+      "sha256": "54c2bb9962e8a30c8270e34c5efc3d5fee579f53087fa7d435b95fbba2af7b2b",
+      "marker": "w64devkit/bin/g++.exe"
+    },
+    {
+      "name": "cmake",
+      "version": "4.4.5",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.5/cmake-4.4.5-windows-x86_64.zip",
+      "archive": "cmake-4.4.5-windows-x86_64.zip",
+      "sha256": "326c826486d46a23cf9d5a1c9ee3a567d427bdd02c4a34071937a2a675cff004",
+      "marker": "cmake-4.4.5-windows-x86_64/bin/cmake.exe"
+    },
+    {
+      "name": "SDL2",
+      "version": "2.32.10",
+      "url": "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz",
+      "archive": "SDL2-devel-2.32.10-mingw.tar.gz",
+      "sha256": "83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2",
+      "marker": "SDL2-2.32.10/x86_64-w64-mingw32/bin/SDL2.dll"
+    }
+  ]
+}
