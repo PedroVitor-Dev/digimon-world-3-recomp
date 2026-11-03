@@ -1,32 +1,64 @@
 # Engineering roadmap
 
-## 1. Dump preparation (implemented)
+## Foundation already implemented
 
-Windows launcher and CLI, ISO9660 inventory, SYSTEM.CNF boot discovery, PS-X EXE bounds validation and local SHA-256 manifest. Synthetic tests cover cooked and raw sectors plus malformed inputs. A successful preparation does not establish game compatibility.
+Windows launcher and CLI, ISO9660 inventory, SYSTEM.CNF boot discovery, PS-X EXE bounds validation and local SHA-256 manifest. Synthetic tests cover cooked and raw sectors plus malformed inputs. Preparation does not establish game compatibility.
 
-## 2. Establish the game-specific recompilation profile
+## 1. Architecture and initial research profile — completed
 
-Identify the supplied revision by content. Map the executable, entry point, code/data boundaries, indirect jumps, BIOS calls and dynamically loaded overlays. Document the translated copy separately from an unmodified reference; do not infer revision identity from the archive name or serial alone. Record reproducible hashes locally before producing any supported-revision profile.
+- [Architecture and contracts](ARCHITECTURE.md): component boundaries, clocks, configuration, state compatibility, saves and backups.
+- [Initial research copy](INITIAL_PROFILE.md): observed metadata, exact hashes and verification procedure.
+- [Build and first-boot plan](BUILD_AND_BOOT.md): existing toolchain, native build direction and dependency acceptance gates.
+- Machine-readable identity in `profiles/dw3-sles04936-local-translation.json` and `scripts/verify-profile.ps1`.
 
-Evaluate and pin a recompiler only after reviewing its source, tests, Windows build and game-specific behavior. PS1Recomp is a candidate, not a dependency or a confirmed solution. Its current documented renderer uses OpenGL, so adopting it does not meet the Vulkan target automatically. Record upstream revision and license if adopted.
+This completes the architectural definition and copy identification. It does not complete function discovery, select a recompiler or demonstrate a native boot.
 
-## 3. Recompiler and runtime vertical slice
+## 2. First native boot — next
 
-Translate a verified reachable MIPS function set to C++ and build it with a Windows C++ toolchain. Validate delay slots, load delays, exceptions and indirect control flow. Integrate the game boot path, RAM, BIOS services, CD-ROM, interrupts, DMA, timers, GTE, SPU and MDEC incrementally. Account for overlays and generated code explicitly. Compare boot traces against a reference implementation before claiming a playable port.
+Validate the C++ toolchain. Review a candidate recompiler's source, license, Windows build and instruction/overlay semantics; pin its revision before integration. PS1Recomp remains a candidate, not an adopted dependency.
 
-Exit criterion: a reproducible native build reaches a verified game screen with correct rendering and input, with all remaining fallbacks and missing behavior documented.
+Map the entry point, reachable functions, code/data, BIOS calls, indirect branches and dynamically loaded modules. Generate and compile a controlled function set. Integrate required PS1 services and compare boot traces with a reference execution.
 
-## 4. Vulkan 1.3 renderer and settings
+Exit: reproducible native executable reaches a real game screen with useful diagnostics, and limitations are documented.
 
-Implement accurate PS1 GPU command semantics and VRAM behavior, then present using Vulkan 1.3. Query loader and physical-device capabilities; provide a clear unsupported-GPU error. Integrate an F1 settings overlay in the actual runtime, with persisted display, audio and controller configuration. A launcher dialog does not satisfy the in-game requirement.
+## 3. Correct gameplay and persistent progress
 
-## 5. Product launcher and validation
+Validate menus, traversal, battles, transitions, FMV, sound, input and memory cards at the original simulation timing. Establish representative test routes and repeat save/reload cycles. Optimize measured bottlenecks after correctness.
 
-Connect analysis, pinned code generation, native compilation and launch with logs and failure recovery. Keep long operations cancellable. Isolate outputs per source hash and toolchain revision. Test save/load, memory cards, battles, world traversal, FMV, sound and translated text; document Windows 10/11 and GPU coverage. Publish only after real gameplay verification.
+Exit: a documented playable session with progress safely saved and resumed.
 
-## References
+## 4. Vulkan 1.3 and 4K
 
-- [PS-X EXE and SYSTEM.CNF specification](https://psx-spx.consoledev.net/cdromfileformats/)
-- [PS1Recomp source and current limitations](https://github.com/PS1Recomp/ps1-recomp)
+Implement PS1 GPU semantics and a Vulkan presentation/rendering backend. Query loader and physical-device capabilities and required features. Separate internal resolution from output resolution; preserve aspect ratio by default.
 
-No C++ compiler/CMake/Ninja was found on PATH during the initial environment inspection; the .NET runtime was present without an SDK. The preparation tools deliberately use the installed .NET Framework compiler. Native runtime development needs its own C++/Vulkan toolchain.
+Exit: correct 3840×2160 output on documented test hardware, with CPU/GPU measurements and remaining image differences recorded.
+
+## 5. High refresh and 160 FPS research
+
+Measure timing dependencies. Separate original simulation from rendering/presentation where possible. Test animation, input, battles, audio and timers after every timing change. Distinguish interpolated frames, presentation refresh, rendered FPS and actual simulation updates.
+
+Exit: validated high-refresh mode or a precise blocker report. 160 FPS remains a target dependent on game behavior and hardware.
+
+## 6. Product launcher and pre-game configuration
+
+Connect selection, identity verification, analysis, generation, compilation and launch. Add progress, cancellation, failure recovery, build caching and shared versioned configuration. Never infer a successful later stage from preparation alone.
+
+Exit: a user can prepare and start a supported copy through the UI, with actionable errors.
+
+## 7. In-game F1 overlay
+
+Add display/audio/input options, configurable shortcuts with conflict handling, hold/toggle fast-forward, slots for states, session and accumulated real playtime, and access to save/backup history. Coordinate pause and input capture. Reuse configuration contracts from the launcher.
+
+Exit: keyboard/controller operation and persistence verified inside the actual runtime. State actions are enabled only after milestone 8's state implementation passes validation.
+
+## 8. Save states and backup management
+
+Build on milestone 3's memory cards. Snapshot complete machine state at safe points, validate compatibility before loading, coordinate persistent-card rollback and back up before destructive restoration. Add checksums, temporary writes, bounded retention and recovery from interrupted writes.
+
+Exit: states and backups restore correctly, reject incompatible/corrupt inputs and preserve the last valid normal save through failures. State format design and serialization hooks start with the runtime; this milestone completes the user-facing feature.
+
+## 9. Distribution and maintenance
+
+Package redistributable project components, keeping user-derived outputs local. Validate Windows 10/11, selected GPU families, controllers and accented paths. Preserve player data across upgrades and cache cleanup. Document exact supported copies, dependency versions and known issues.
+
+Exit: tested public release with a reproducible preparation/build procedure and no bundled disc assets.

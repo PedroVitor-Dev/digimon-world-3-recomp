@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "dw3-sles04936-local-translation",
+  "status": "research-only",
+  "description": "User-supplied translated copy; archive label BR-EUR T1.01 is not independently verified.",
+  "identity": {
+    "imageSha256": "cba308798bf768da4c0675f3130a4b380f02b53da1a50a7537ad9be7d8f3da94",
+    "imageSize": 692146560,
+    "executableSha256": "47804642b50bbc0e39418fadce9dd89843e8c2f5e780839ca7e943653712b4ae",
+    "volume": "DMW3",
+    "bootFile": "SLES_049.36",
+    "sectorSize": 2352,
+    "sectorLayout": "MODE2/2352",
+    "entryPoint": "0x80010E90",
+    "loadAddress": "0x80010000",
+    "payloadSize": 921600,
+    "executableSize": 923648,
+    "inventoryEntryCount": 2482
+  },
+  "evidence": {
+    "dumpPrepared": true,
+    "nativeBootVerified": false,
+    "gameplayVerified": false,
+    "unmodifiedReferenceCompared": false
+  },
+  "analysis": {
+    "functionMap": null,
+    "overlayMap": null,
+    "biosCallMap": null,
+    "timingModel": null,
+    "recompilerDependencyLock": null
+  }
+}

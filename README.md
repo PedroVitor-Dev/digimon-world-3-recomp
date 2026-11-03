@@ -28,8 +28,23 @@ Supported layouts: ISO9660 with 2048-byte sectors; raw Mode1/2352 and Mode2 Form
 - User-provided extracted game copy; no bundled disc assets.
 - Launcher for dump selection, validation, local recompilation and launch.
 - In-game settings opened with F1.
+- Configurable shortcuts, fast-forward, save/load states, session and accumulated playtime.
+- Persistent memory cards, versioned backups and restoration.
+- 4K output and high-refresh presentation; actual 160 FPS requires game-specific timing research and hardware validation.
 
 Vulkan 1.3 is a requirement for the **planned game renderer**, not this preparation utility. GPU compatibility is not checked yet. See [the technical roadmap](docs/ROADMAP.md) for the remaining work.
+
+## Architecture and initial research copy
+
+The [architecture](docs/ARCHITECTURE.md) defines the launcher/runtime boundary, data contracts, clocks and persistence strategy. The [initial research profile](docs/INITIAL_PROFILE.md) records the supplied copy without claiming native compatibility. The [build and boot plan](docs/BUILD_AND_BOOT.md) defines the next engineering gates.
+
+After preparing the supplied copy, verify its actual image and executable hashes:
+
+```powershell
+.\scripts\verify-profile.ps1
+```
+
+The default profile is `profiles/dw3-sles04936-local-translation.json`. It is an identity record, not a function map or a ready-to-use recompiler configuration. An unknown or modified image needs a separate reviewed profile. No backend has been selected or pinned yet.
 
 ## Local data and contributions
 
