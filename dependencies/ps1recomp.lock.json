@@ -5,7 +5,7 @@
   "status": "evaluation-only",
   "license": "GPL-3.0-or-later",
   "portabilityPatch": {
-    "sha256": "df01948ce2c6afaa8d6199061137abd1ad8dcbde91c1dfe63860573e2b615bbf",
+    "sha256": "a67c0885a0867ff4078d25085c75c7491d68a3863ae5cffbfd509d465c86e1cc",
     "path": "patches/ps1recomp-windows.patch"
   },
   "submodules": [

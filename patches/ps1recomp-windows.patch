@@ -110,6 +110,19 @@ index 0000000..d93d048
 +#include <execinfo.h>
 +#endif
 \ No newline at end of file
+diff --git a/ps1Runtime/include/runtime/input/input.h b/ps1Runtime/include/runtime/input/input.h
+index 8da82b3..a1b7d46 100644
+--- a/ps1Runtime/include/runtime/input/input.h
++++ b/ps1Runtime/include/runtime/input/input.h
+@@ -85,7 +85,7 @@ private:
+ 
+   void formatImage();
+   static uint8_t frameChecksum(const uint8_t *frame, std::size_t n);
+-  void flush();
++  bool flush();
+ 
+   std::array<uint8_t, CARD_SIZE> data_{};
+   bool present_ = true;
 diff --git a/ps1Runtime/src/bios/bios.cpp b/ps1Runtime/src/bios/bios.cpp
 index 1e8b768..b06a50f 100644
 --- a/ps1Runtime/src/bios/bios.cpp
@@ -275,6 +288,152 @@ index b543ea5..5a08ea2 100644
    if (vao_) {
      glDeleteVertexArrays(1, &vao_);
      vao_ = 0;
+diff --git a/ps1Runtime/src/input/input.cpp b/ps1Runtime/src/input/input.cpp
+index 1eacb6e..405521e 100644
+--- a/ps1Runtime/src/input/input.cpp
++++ b/ps1Runtime/src/input/input.cpp
+@@ -1,6 +1,18 @@
+ #include "runtime/input/input.h"
+ #include "runtime/metrics.h"
+ #include <fmt/format.h>
++#include <atomic>
++#include <chrono>
++#include <filesystem>
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#endif
+ 
+ namespace ps1::input {
+ 
+@@ -72,39 +84,76 @@ void MemoryCard::reset() {
+ }
+ 
+ bool MemoryCard::loadFromFile(const std::string &path) {
+-  std::ifstream file(path, std::ios::binary);
+-  if (!file)
+-    return false;
+-  file.read(reinterpret_cast<char *>(data_.data()), CARD_SIZE);
+-  return file.good() || file.eof();
++  std::ifstream file(std::filesystem::path(path), std::ios::binary | std::ios::ate);
++  if (!file || file.tellg() != static_cast<std::streamoff>(CARD_SIZE)) return false;
++  std::array<uint8_t, CARD_SIZE> incoming{};
++  file.seekg(0);
++  file.read(reinterpret_cast<char *>(incoming.data()), incoming.size());
++  if (file.gcount() != static_cast<std::streamsize>(CARD_SIZE)) return false;
++  data_ = incoming;
++  return true;
+ }
+ 
+ bool MemoryCard::saveToFile(const std::string &path) const {
+-  std::ofstream file(path, std::ios::binary);
+-  if (!file)
+-    return false;
+-  file.write(reinterpret_cast<const char *>(data_.data()), CARD_SIZE);
+-  return file.good();
++  static std::atomic<uint64_t> sequence{0};
++  auto target = std::filesystem::path(path);
++  auto temporary = target;
++  temporary += ".dw3-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
++               "-" + std::to_string(sequence.fetch_add(1)) + ".tmp";
++  bool committed = false;
++#ifdef _WIN32
++  HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
++                            FILE_ATTRIBUTE_NORMAL, nullptr);
++  if (file == INVALID_HANDLE_VALUE) return false;
++  DWORD written = 0;
++  const bool complete = WriteFile(file, data_.data(), CARD_SIZE, &written, nullptr) &&
++                        written == CARD_SIZE && FlushFileBuffers(file);
++  const bool closed = CloseHandle(file) != 0;
++  if (complete && closed)
++    committed = MoveFileExW(temporary.c_str(), target.c_str(),
++                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
++#else
++  {
++    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
++    if (!file) return false;
++    file.write(reinterpret_cast<const char *>(data_.data()), CARD_SIZE);
++    file.flush();
++    if (!file.good()) { file.close(); std::error_code ignored; std::filesystem::remove(temporary, ignored); return false; }
++    file.close();
++    if (file.fail()) { std::error_code ignored; std::filesystem::remove(temporary, ignored); return false; }
++  }
++  std::error_code error;
++  std::filesystem::rename(temporary, target, error);
++  committed = !error;
++#endif
++  if (!committed) { std::error_code ignored; std::filesystem::remove(temporary, ignored); }
++  return committed;
+ }
+ 
+ bool MemoryCard::attachFile(const std::string &path) {
++  backingPath_.clear();
++  std::error_code error;
++  const bool exists = std::filesystem::exists(std::filesystem::path(path), error);
++  if (error || (exists ? !loadFromFile(path) : !saveToFile(path))) {
++    present_ = false;
++    return false; // Never replace an existing unreadable or malformed image with a blank card.
++  }
+   backingPath_ = path;
+-  if (loadFromFile(path))
+-    return true;
+-  // No file yet: keep the formatted image and write it out, so the card the
+-  // game sees on this run is the one it will see on the next.
+-  return saveToFile(path);
++  present_ = true;
++  return true;
+ }
+ 
+-// Written through after every accepted sector so a crash, or the fast exit
+-// that skips destructors, cannot lose a save.  A sector write is 128 bytes of
+-// game data against a 128 KB file; a whole save file is 64 of them, which is
+-// well inside what this costs.
+-void MemoryCard::flush() {
+-  if (!dirty_ || backingPath_.empty())
+-    return;
+-  if (saveToFile(backingPath_))
+-    dirty_ = false;
++// Commit each accepted sector through a flushed temporary image and replacement.
++// A failed commit is reported to the guest rather than acknowledged as a good save.
++bool MemoryCard::flush() {
++  if (!dirty_) return true;
++  if (backingPath_.empty()) { dirty_ = false; return true; }
++  if (!saveToFile(backingPath_)) {
++    fmt::print(stderr, "[MemCard] Persistence failed; sector write rejected.\n");
++    return false;
++  }
++  dirty_ = false;
++  return true;
+ }
+ 
+ // One byte of an SIO exchange.
+@@ -253,10 +302,19 @@ uint8_t MemoryCard::transfer(uint8_t dataIn) {
+     return 0xFF; // bad sector
+   if (checksum_ != 0)
+     return 0x4E; // "N": bad checksum, nothing written
++  std::array<uint8_t, SECTOR_SIZE> previous;
++  std::memcpy(previous.data(), data_.data() + sectorAddr_ * SECTOR_SIZE, SECTOR_SIZE);
++  const uint8_t oldFlag = flag_;
++  const bool oldDirty = dirty_;
+   std::memcpy(data_.data() + sectorAddr_ * SECTOR_SIZE, writeBuf_, SECTOR_SIZE);
+   dirty_ = true;
+-  flag_ = static_cast<uint8_t>(flag_ & ~0x08); // directory has now been touched
+-  flush();
++  flag_ = static_cast<uint8_t>(flag_ & ~0x08);
++  if (!flush()) {
++    std::memcpy(data_.data() + sectorAddr_ * SECTOR_SIZE, previous.data(), SECTOR_SIZE);
++    flag_ = oldFlag;
++    dirty_ = oldDirty;
++    return 0x4E; // Report failure; RAM and the previous disk image remain intact.
++  }
+   return 0x47; // "G": write good
+ }
+ 
 diff --git a/ps1Runtime/src/main_host.cpp b/ps1Runtime/src/main_host.cpp
 index ea693dc..35ef876 100644
 --- a/ps1Runtime/src/main_host.cpp
